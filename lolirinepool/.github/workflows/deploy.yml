@@ -3,10 +3,7 @@ name: Deploy to OVH VPS
 on:
   push:
     branches: [ main ]
-    paths:
-      - "lolirinepool/**"
-      - ".github/workflows/deploy.yml"
-      - "!**.md"
+  workflow_dispatch:
 
 jobs:
   deploy:
