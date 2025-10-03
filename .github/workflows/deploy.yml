@@ -1,4 +1,5 @@
 name: Deploy to OVH VPS
+
 on:
   push:
     branches: [ main ]
@@ -8,59 +9,78 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      # Charge la clé privée proprement
-      - name: Add SSH key
-        uses: webfactory/ssh-agent@v0.8.0
-        with:
-          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
-
-      - name: Preflight
-        run: |
-          test -n "${{ secrets.VPS_HOST }}" || (echo "VPS_HOST manquant" && exit 1)
-          test -n "${{ secrets.VPS_USER }}" || (echo "VPS_USER manquant" && exit 1)
-          # Vérifie que la clé ressemble à une OpenSSH
-          echo "${{ secrets.VPS_SSH_KEY }}" | head -1 | grep -q 'BEGIN OPENSSH PRIVATE KEY' || (echo "Clé privée mal formée" && exit 1)
+      - name: Checkout (needed for build context validation)
+        uses: actions/checkout@v4
 
       - name: SSH deploy
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          APP_PORT: ${{ secrets.APP_PORT }}
-          REPO: git@github.com:lolirine/Pool-store-Lolirine.git
-        run: |
-          set -euo pipefail
-          APP_PORT="${APP_PORT:-3000}"
-          SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}          # ex: 51.38.34.23
+          username: ${{ secrets.VPS_USER }}      # ex: ubuntu
+          key: ${{ secrets.VPS_SSH_KEY }}        # clé privée OpenSSH
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
 
-          ssh $SSH_OPTS ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} bash -s <<'EOS'
-          set -euo pipefail
-          APP_PORT="${APP_PORT:-3000}"
+            # 1) Pré-requis: Docker + Nginx (idempotent)
+            if ! command -v docker >/dev/null; then
+              curl -fsSL https://get.docker.com | sh
+              sudo systemctl enable --now docker
+            fi
+            if ! command -v nginx >/dev/null; then
+              sudo apt-get update && sudo apt-get install -y nginx
+              sudo ufw allow 'Nginx Full' || true
+            fi
 
-          # Docker
-          if ! command -v docker >/dev/null; then
-            curl -fsSL https://get.docker.com | sh
-            sudo systemctl enable --now docker
-          fi
-          command -v docker compose >/dev/null || { sudo apt-get update && sudo apt-get install -y docker-compose-plugin; }
+            # 2) Arborescence déploiement
+            mkdir -p ~/apps && cd ~/apps
 
-          # Code
-          mkdir -p ~/apps && cd ~/apps
-          if [ ! -d "Pool-store-Lolirine/.git" ]; then
-            git clone --depth=1 "$REPO" Pool-store-Lolirine
-          fi
-          cd Pool-store-Lolirine
-          git fetch --depth=1 origin main
-          git checkout main
-          git reset --hard origin/main
+            # 3) Clonage initial si absent
+            if [ ! -d "Pool-store-Lolirine/.git" ]; then
+              git clone --depth=1 ${{ secrets.REPO_SSH_URL }} Pool-store-Lolirine
+            fi
 
-          # .env
-          cd lolirinepool
-          printf 'DATABASE_URL=%s\nPORT=%s\n' "$DATABASE_URL" "$APP_PORT" > .env
+            # 4) Pull dernière version
+            cd Pool-store-Lolirine
+            git fetch --depth=1 origin main
+            git checkout main
+            git reset --hard origin/main
 
-          # Rebuild + redeploy
-          docker compose down || true
-          docker compose build --pull --no-cache --build-arg GIT_SHA=${GITHUB_SHA:-manual}
-          docker compose up -d --force-recreate --remove-orphans
-          EOS
-        shell: bash
+            # 5) Préparer .env applicatif
+            cd lolirinepool
+            cat > .env <<EOF
+DATABASE_URL=${{ secrets.DATABASE_URL }}
+PORT=${{ secrets.APP_PORT || 3000 }}
+EOF
+
+            # 6) Build + up
+            docker compose version || sudo apt-get install -y docker-compose-plugin
+            docker compose pull || true
+            docker compose build
+            docker compose up -d
+
+            # 7) Nginx reverse-proxy (idempotent)
+            sudo tee /etc/nginx/sites-available/poolstore >/dev/null <<NGINX
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${HOSTNAME};
+
+  location / {
+    proxy_pass http://127.0.0.1:${{ secrets.APP_PORT || 3000 }};
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+  }
+}
+NGINX
+            sudo ln -sf /etc/nginx/sites-available/poolstore /etc/nginx/sites-enabled/poolstore
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            # 8) Sanity check
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
