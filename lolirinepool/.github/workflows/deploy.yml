@@ -54,11 +54,14 @@ DATABASE_URL=${{ secrets.DATABASE_URL }}
 PORT=${{ secrets.APP_PORT || 3000 }}
 EOF
 
-            # 6) Build + up
+            # 6) Build + up  (rebuild forcé + recréation)
             docker compose version || sudo apt-get install -y docker-compose-plugin
-            docker compose pull || true
-            docker compose build
-            docker compose up -d
+            docker compose down || true
+            docker compose build --pull --no-cache --build-arg GIT_SHA=${{ github.sha }}
+            docker compose up -d --force-recreate --remove-orphans
+            # Prisma si besoin :
+            # docker compose exec -T app npx prisma migrate deploy || true
+
 
             # 7) Nginx reverse-proxy (idempotent)
             sudo tee /etc/nginx/sites-available/poolstore >/dev/null <<NGINX
