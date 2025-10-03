@@ -1,63 +1,89 @@
-name: Deploy to OVH shared
+name: Deploy to OVH VPS
+
 on:
   push:
     branches: [ main ]
     paths:
-      - "index.html"
-      - "src/**"
-      - "public/**"
-      - "ops/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "yarn.lock"
-      - "vite.config.*"
+      - "lolirinepool/**"
       - ".github/workflows/deploy.yml"
-  workflow_dispatch: {}
-
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+      - "!**.md"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (needed for build context validation)
+        uses: actions/checkout@v4
 
-      - name: Print changes
-        run: |
-          git status
-          ls -la
-          find src -maxdepth 2 -type f | head -n 100
-
-      - name: Install + Build
-        run: |
-          if [ -f yarn.lock ]; then corepack enable; yarn install --no-immutable || yarn install; yarn build;
-          elif [ -f pnpm-lock.yaml ]; then corepack enable; pnpm install --no-frozen-lockfile || pnpm install; pnpm build;
-          else npm ci || npm install; npm run build; fi
-          ART=""
-          for d in dist out build ".next/export"; do [ -d "$d" ] && ART="$d" && break; done
-          [ -z "$ART" ] && { echo "Aucun artefact"; exit 1; }
-          date -u +"%FT%TZ" > "$ART/version.txt"
-          echo "ART=$ART" >> $GITHUB_ENV
-          echo "Artifact at: $ART"
-          ls -la "$ART"
-
-      - name: Copy .htaccess into artifact
-        run: |
-          if [ -f ops/htaccess.prod ]; then cp ops/htaccess.prod "$ART/.htaccess"; fi
-
-      - name: Deploy via FTPS to OVH
-        uses: SamKirkland/FTP-Deploy-Action@v4
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          server: ${{ secrets.OVH_FTP_HOST }}
-          username: ${{ secrets.OVH_FTP_USER }}
-          password: ${{ secrets.OVH_FTP_PASS }}
-          protocol: ftps
-          local-dir: ${{ env.ART }}/
-          server-dir: www/
-          log-level: verbose
-          exclude: |
-            **/.git*
-            **/node_modules/**
-          dangerous-clean-slate: false
+          host: ${{ secrets.VPS_HOST }}          # ex: 51.38.34.23
+          username: ${{ secrets.VPS_USER }}      # ex: ubuntu
+          key: ${{ secrets.VPS_SSH_KEY }}        # clé privée OpenSSH
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            # 1) Pré-requis: Docker + Nginx (idempotent)
+            if ! command -v docker >/dev/null; then
+              curl -fsSL https://get.docker.com | sh
+              sudo systemctl enable --now docker
+            fi
+            if ! command -v nginx >/dev/null; then
+              sudo apt-get update && sudo apt-get install -y nginx
+              sudo ufw allow 'Nginx Full' || true
+            fi
+
+            # 2) Arborescence déploiement
+            mkdir -p ~/apps && cd ~/apps
+
+            # 3) Clonage initial si absent
+            if [ ! -d "Pool-store-Lolirine/.git" ]; then
+              git clone --depth=1 ${{ secrets.REPO_SSH_URL }} Pool-store-Lolirine
+            fi
+
+            # 4) Pull dernière version
+            cd Pool-store-Lolirine
+            git fetch --depth=1 origin main
+            git checkout main
+            git reset --hard origin/main
+
+            # 5) Préparer .env applicatif
+            cd lolirinepool
+            cat > .env <<EOF
+DATABASE_URL=${{ secrets.DATABASE_URL }}
+PORT=${{ secrets.APP_PORT || 3000 }}
+EOF
+
+            # 6) Build + up
+            docker compose version || sudo apt-get install -y docker-compose-plugin
+            docker compose pull || true
+            docker compose build
+            docker compose up -d
+
+            # 7) Nginx reverse-proxy (idempotent)
+            sudo tee /etc/nginx/sites-available/poolstore >/dev/null <<NGINX
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${HOSTNAME};
+
+  location / {
+    proxy_pass http://127.0.0.1:${{ secrets.APP_PORT || 3000 }};
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+  }
+}
+NGINX
+            sudo ln -sf /etc/nginx/sites-available/poolstore /etc/nginx/sites-enabled/poolstore
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            # 8) Sanity check
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
