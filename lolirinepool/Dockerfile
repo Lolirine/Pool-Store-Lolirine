@@ -1,6 +1,9 @@
 FROM node:20-bookworm-slim
 WORKDIR /app
 
+ARG GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA
+
 # Outils de build pour modules natifs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git build-essential python3 pkg-config \
