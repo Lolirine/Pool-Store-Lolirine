@@ -236,7 +236,7 @@ export const Header: React.FC<HeaderProps> = (props) => {
             <div className="flex items-center h-20">
                 {/* Logo */}
                 <button onClick={() => navigateTo('home')} className="flex-shrink-0">
-                    <img src="https://lolirine-pool.odoo.com/web/image/website/1/logo/Lolirine%20Pool%20Store?unique=b561c22" alt="Lolirine Pool Store" className="h-16 w-auto"/>
+                    <img src="https://storage.googleapis.com/lolirinepoolstoreimage/Blue%20Waves%20Surfing%20Club%20Logo.png" alt="Lolirine Pool Store" className="h-16 w-auto"/>
                 </button>
                 
                 {/* Mega Menu Trigger */}
