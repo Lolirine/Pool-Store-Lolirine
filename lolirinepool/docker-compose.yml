@@ -1,0 +1,9 @@
+
+services:
+  app:
+    build: .
+    container_name: poolstore-app
+    env_file: .env
+    restart: unless-stopped
+    expose:
+      - "3000"
