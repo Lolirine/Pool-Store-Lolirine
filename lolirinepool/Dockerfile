@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY package*.json ./
 RUN npm set audit false && npm set fund false \
- && if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+ && if [ -f package-lock.json ] ; then npm ci --omit=dev ; else npm install --omit=dev ; fi
 
 COPY . .
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["npm","start"]   # adaptez selon votre script "start"
+CMD ["npm","start"]    # adaptez si besoin
