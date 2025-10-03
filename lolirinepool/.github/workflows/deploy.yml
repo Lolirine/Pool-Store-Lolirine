@@ -1,1 +1,63 @@
+name: Deploy to OVH shared
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "index.html"
+      - "src/**"
+      - "public/**"
+      - "ops/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "yarn.lock"
+      - "vite.config.*"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print changes
+        run: |
+          git status
+          ls -la
+          find src -maxdepth 2 -type f | head -n 100
+
+      - name: Install + Build
+        run: |
+          if [ -f yarn.lock ]; then corepack enable; yarn install --no-immutable || yarn install; yarn build;
+          elif [ -f pnpm-lock.yaml ]; then corepack enable; pnpm install --no-frozen-lockfile || pnpm install; pnpm build;
+          else npm ci || npm install; npm run build; fi
+          ART=""
+          for d in dist out build ".next/export"; do [ -d "$d" ] && ART="$d" && break; done
+          [ -z "$ART" ] && { echo "Aucun artefact"; exit 1; }
+          date -u +"%FT%TZ" > "$ART/version.txt"
+          echo "ART=$ART" >> $GITHUB_ENV
+          echo "Artifact at: $ART"
+          ls -la "$ART"
+
+      - name: Copy .htaccess into artifact
+        run: |
+          if [ -f ops/htaccess.prod ]; then cp ops/htaccess.prod "$ART/.htaccess"; fi
+
+      - name: Deploy via FTPS to OVH
+        uses: SamKirkland/FTP-Deploy-Action@v4
+        with:
+          server: ${{ secrets.OVH_FTP_HOST }}
+          username: ${{ secrets.OVH_FTP_USER }}
+          password: ${{ secrets.OVH_FTP_PASS }}
+          protocol: ftps
+          local-dir: ${{ env.ART }}/
+          server-dir: www/
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/node_modules/**
+          dangerous-clean-slate: false
