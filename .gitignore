@@ -1,0 +1,19 @@
+# secrets
+.env
+.env.*
+# node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+# builds
+dist/
+build/
+.next/
+.out/
+coverage/
+# system
+.DS_Store
+Thumbs.db
+# docker
+*.local.yml
