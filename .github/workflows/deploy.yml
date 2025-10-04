@@ -35,11 +35,11 @@ jobs:
           known_hosts: 'placeholder'
           
       - name: Add Known Hosts
-        run: ssh-keyscan -H 51.38.34.23 >> ~/.ssh/known_hosts
+        run: ssh-keyscan -H 5.196.236.227 >> ~/.ssh/known_hosts
 
       - name: Deploy to OVH VPS
         run: |
-          ssh ubuntu@51.38.34.23 << 'ENDSSH'
+          ssh ubuntu@5.196.236.227 << 'ENDSSH'
             set -e
             
             # Création du répertoire si nécessaire
@@ -48,9 +48,9 @@ jobs:
           ENDSSH
           
           # Transfer des fichiers buildés
-          rsync -avz --delete dist/ ubuntu@51.38.34.23:/var/www/lolirinepool/
+          rsync -avz --delete dist/ ubuntu@5.196.236.227:/var/www/lolirinepool/
           
-          ssh ubuntu@51.38.34.23 << 'ENDSSH'
+          ssh ubuntu@5.196.236.227 << 'ENDSSH'
             # Configuration des permissions
             sudo chown -R www-data:www-data /var/www/lolirinepool
             sudo chmod -R 755 /var/www/lolirinepool
@@ -62,4 +62,4 @@ jobs:
           ENDSSH
 
       - name: Verify Deployment
-        run: echo "🚀 Application déployée sur http://51.38.34.23"
+        run: echo "🚀 Application déployée sur http://5.196.236.227"
